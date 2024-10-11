@@ -29,7 +29,7 @@ log = logging.getLogger("BotzHub")
 # start the bot
 log.info("Starting...")
 try:
-    bottoken = config("BOT_TOKEN")
+    bottoken = config("7565000224:AAFUq8g6xbNExgTGOaRA5gqkBQ-5DTUEY7M")
     xchannel = config("CHANNEL")
     welcome_msg = config("WELCOME_MSG")
     welcome_not_joined = config("WELCOME_NOT_JOINED")
