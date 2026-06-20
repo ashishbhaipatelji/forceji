@@ -1,7 +1,10 @@
 import logging
 import re
 import os
+import io
 import time
+import asyncio
+import urllib.request
 from telethon.utils import get_display_name
 from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
@@ -366,11 +369,13 @@ def _start_text():
 
 
 def _start_buttons():
+    bot_username = (getattr(bot_self, "username", None) or "") if bot_self else ""
+    add_url = (f"https://t.me/{bot_username}?startgroup=true"
+               if bot_username else "https://t.me")
     return [
         [
-            Button.url(f"📢 @{channel}", url=f"https://t.me/{channel}"),
-            Button.url("➕ Add to Group",
-                       url=f"https://t.me/{bot_self.username}?startgroup=true"),
+            Button.url(f"📢 @{channel}",    url=f"https://t.me/{channel}"),
+            Button.url("➕ Add to Group",    url=add_url),
         ],
         [
             Button.inline("📊 Statistics",   data=b"stats"),
@@ -399,14 +404,33 @@ def _start_buttons():
 
 @BotzHub.on(events.NewMessage(pattern="^/start$"))
 async def cmd_start(event):
-    sender = await event.get_sender()
-    db_upsert_user(
-        event.sender_id,
-        sender.first_name or "",
-        sender.username  or "",
-    )
-    db_log_stat("start_command", user_id=event.sender_id)
-    await event.reply(_start_text(), buttons=_start_buttons(), link_preview=False)
+    try:
+        sender = await event.get_sender()
+        if sender and event.sender_id:
+            db_upsert_user(
+                event.sender_id,
+                getattr(sender, "first_name", "") or "",
+                getattr(sender, "username",   "") or "",
+            )
+    except Exception as e:
+        log.warning("cmd_start get_sender: %s", e)
+    try:
+        db_log_stat("start_command", user_id=event.sender_id)
+    except Exception:
+        pass
+    try:
+        await event.reply(
+            _start_text(),
+            buttons=_start_buttons(),
+            link_preview=False,
+        )
+        log.info("cmd_start: reply sent with buttons to %s", event.sender_id)
+    except Exception as e:
+        log.error("cmd_start reply failed: %s", e)
+        try:
+            await event.reply(_start_text(), link_preview=False)
+        except Exception as e2:
+            log.error("cmd_start fallback reply failed: %s", e2)
 
 
 # ── /help ─────────────────────────────────────────────────────────────────────
@@ -1325,38 +1349,74 @@ for _cb_data, (_title, _desc) in _ADMIN_HELP.items():
     )
 
 
+# ── Image fetch helper (stdlib only — no aiohttp required) ────────────────────
+
+async def _fetch_image_bytes(url: str, timeout: int = 15) -> io.BytesIO:
+    """Download an image from a URL using only stdlib urllib, returns BytesIO."""
+    def _download():
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.read()
+    data = await asyncio.to_thread(_download)
+    buf = io.BytesIO(data)
+    buf.name = "developer.jpg"
+    return buf
+
+
 # ── Developer profile card ────────────────────────────────────────────────────
+
+DEV_IMAGE_URL = "https://i.postimg.cc/s2Xm3qSf/IMG-20260620-133210-543.jpg"
+
+DEV_BUTTONS = [
+    [
+        Button.url("✈️ Telegram",  url="https://t.me/Y9_S4"),
+        Button.url("📸 Instagram", url="https://www.instagram.com/1.0_v_"),
+    ],
+    [
+        Button.url("🎵 TikTok",    url="https://www.tiktok.com/@zix8ii"),
+        Button.url("📘 Facebook",  url="https://www.facebook.com/share/18pSHgPiaS/"),
+    ],
+    [
+        Button.inline("◀️ Back to Menu", data=b"back_start"),
+    ],
+]
+
+DEV_CAPTION = (
+    "**👨‍💻 Developer**\n\n"
+    "Shield Bot is built and maintained by its developer.\n"
+    "Connect via any of the links below 👇"
+)
+
 
 @BotzHub.on(events.callbackquery.CallbackQuery(data=b"developer"))
 async def cb_developer(event):
     await event.answer(cache_time=0)
-    dev_buttons = [
-        [
-            Button.url("✈️ Telegram",  url="https://t.me/Y9_S4"),
-            Button.url("📸 Instagram", url="https://www.instagram.com/1.0_v_?igsh=N2N5MXNwN3p4ZDY2"),
-        ],
-        [
-            Button.url("🎵 TikTok",    url="https://www.tiktok.com/@zix8ii?_r=1&_t=ZS-96PtnTlOnnY"),
-            Button.url("📘 Facebook",  url="https://www.facebook.com/share/18pSHgPiaS/"),
-        ],
-        [
-            Button.inline("◀️ Back to Menu", data=b"back_start"),
-        ],
-    ]
     try:
+        img = await _fetch_image_bytes(DEV_IMAGE_URL)
         await BotzHub.send_file(
             event.chat_id,
-            "https://i.postimg.cc/s2Xm3qSf/IMG-20260620-133210-543.jpg",
-            caption=(
-                "**👨‍💻 Developer**\n\n"
-                "Shield Bot was built and maintained by its developer.\n"
-                "Reach out via any of the links below 👇"
-            ),
-            buttons=dev_buttons,
+            img,
+            caption=DEV_CAPTION,
+            buttons=DEV_BUTTONS,
+            parse_mode="md",
         )
+        log.info("cb_developer: profile card sent to %s", event.sender_id)
     except Exception as e:
-        log.error("cb_developer send_file: %s", e)
-        await event.answer("⚠️ Could not load developer card. Try again.", cache_time=0, alert=True)
+        log.error("cb_developer image fetch/send failed: %s", e)
+        # Fallback: text-only card with all buttons still visible
+        try:
+            await BotzHub.send_message(
+                event.chat_id,
+                DEV_CAPTION,
+                buttons=DEV_BUTTONS,
+                parse_mode="md",
+            )
+        except Exception as e2:
+            log.error("cb_developer fallback text failed: %s", e2)
+            await event.answer(
+                "👨‍💻 Developer: @Y9_S4 on Telegram",
+                cache_time=0, alert=True,
+            )
 
 
 # ── Warn-related inline button callbacks ─────────────────────────────────────
