@@ -57,9 +57,13 @@ except Exception as e:
     log.info("Bot is quitting...")
     exit(1)
 
-if session_string:
-    session = StringSession(session_string)
-    log.info("Using string session")
+if session_string and len(session_string.strip()) > 20:
+    try:
+        session = StringSession(session_string.strip())
+        log.info("Using string session")
+    except Exception as e:
+        log.warning("SESSION_STRING is invalid (%s) – falling back to file session", e)
+        session = "BotzHub"
 else:
     session = "BotzHub"
     log.info("Using file session (BotzHub.session)")
