@@ -1,2 +1,5 @@
 python-decouple
 telethon
+psycopg2-binary
+decouple
+psycopg2-binary

@@ -2,6 +2,7 @@ import logging
 from telethon.utils import get_display_name
 import re
 from telethon import TelegramClient, events, Button
+from telethon.sessions import StringSession
 from decouple import config
 from telethon.tl.functions.users import GetFullUserRequest
 from telethon.errors.rpcerrorlist import UserNotParticipantError
@@ -20,34 +21,39 @@ try:
     welcome_not_joined = config("WELCOME_NOT_JOINED")
     on_join = config("ON_JOIN", cast=bool)
     on_new_msg = config("ON_NEW_MSG", cast=bool)
-    api_id = config("API_ID", default=None, cast=int)
-    api_hash = config("API_HASH", default=None)
-    if api_id is None or api_hash is None:
-        raise Exception("API_ID and API_HASH must be set in environment variables")
+    api_id = config("API_ID", cast=int)
+    api_hash = config("API_HASH")
+    # SESSION_STRING is required on cloud (Railway/VPS) – optional locally
+    session_string = config("SESSION_STRING", default=None)
 except Exception as e:
-    log.error(e)
-    log.info("Bot is quiting...")
-    exit()
+    log.error("Config error: %s", e)
+    log.info("Bot is quitting...")
+    exit(1)
+
+# Use StringSession on cloud (persists across redeploys); file session locally
+if session_string:
+    session = StringSession(session_string)
+    log.info("Using string session")
+else:
+    session = "BotzHub"
+    log.info("Using file session (BotzHub.session) – not suitable for cloud deployments")
 
 try:
-    BotzHub = TelegramClient("BotzHub", api_id, api_hash).start(bot_token=bottoken)
+    BotzHub = TelegramClient(session, api_id, api_hash).start(bot_token=bottoken)
 except Exception as e:
-    log.error(f"ERROR!\n{str(e)}")
-    log.error("Bot is quiting...")
-    exit()
+    log.error("Failed to start TelegramClient: %s", e)
+    exit(1)
 
 channel = xchannel.replace("@", "")
 bot_self = BotzHub.loop.run_until_complete(BotzHub.get_me())
 
 
 async def get_user_join(id):
-    ok = True
     try:
         await BotzHub(GetParticipantRequest(channel=channel, participant=id))
-        ok = True
+        return True
     except UserNotParticipantError:
-        ok = False
-    return ok
+        return False
 
 
 @BotzHub.on(events.ChatAction)
@@ -70,7 +76,7 @@ async def _(event):
         fullname = f"{name} {last}" if last else name
         username = f"@{uu}" if (uu := user.username) else mention
         x = await get_user_join(user.id)
-        if x is True:
+        if x:
             msg = welcome_msg.format(
                 mention=mention, title=title, fullname=fullname,
                 username=username, name=name, last=last,
@@ -101,7 +107,7 @@ async def mute_on_msg(event):
         return
     x = await get_user_join(event.sender_id)
     temp = await BotzHub.get_entity(event.sender_id)
-    if x is False:
+    if not x:
         if temp.bot:
             return
         try:
@@ -139,11 +145,11 @@ async def _(event):
     if uid == event.sender_id:
         x = await get_user_join(uid)
         nm = event.sender.first_name
-        if x is False:
+        if not x:
             await event.answer(
                 f"You haven't joined @{channel} yet!", cache_time=0, alert=True
             )
-        elif x is True:
+        else:
             try:
                 await BotzHub.edit_permissions(
                     event.chat.id, uid, until_date=None, send_messages=True
@@ -164,7 +170,7 @@ async def _(event):
 @BotzHub.on(events.NewMessage(pattern="^/start$"))
 async def strt(event):
     await event.reply(
-        f"Hi. I'm a force subscribe bot made specially for @{channel}!\n\nCheckout @BotzHub :)",
+        f"Hi! I'm Shield Bot — a force subscribe bot for @{channel}.",
         buttons=[
             Button.url("Channel", url=f"https://t.me/{channel}"),
             Button.url("Repository", url="https://github.com/xditya/ForceSub"),
@@ -172,5 +178,5 @@ async def strt(event):
     )
 
 
-log.info("ForceSub Bot has started as @%s.\nDo visit @BotzHub!", bot_self.username)
+log.info("Shield Bot started as @%s", bot_self.username)
 BotzHub.run_until_disconnected()
