@@ -1,3 +1,6 @@
+# Updated bot.py to load API credentials from environment variables
+# and to preserve original ForceSubscribe functionality.
+
 #    This file is part of the ForveSub distribution (https://github.com/xditya/ForceSub).
 #    Copyright (c) 2021 Adiya
 #
@@ -35,15 +38,18 @@ try:
     welcome_not_joined = config("WELCOME_NOT_JOINED")
     on_join = config("ON_JOIN", cast=bool)
     on_new_msg = config("ON_NEW_MSG", cast=bool)
+    # Move API credentials to env vars (no hardcoded values)
+    api_id = config("API_ID", default=None, cast=int)
+    api_hash = config("API_HASH", default=None)
+    if api_id is None or api_hash is None:
+        raise Exception("API_ID and API_HASH must be set in environment variables")
 except Exception as e:
     log.error(e)
     log.info("Bot is quiting...")
     exit()
 
 try:
-    BotzHub = TelegramClient("BotzHub", 6, "eb06d4abfb49dc3eeb1aeb98ae0f581e").start(
-        bot_token=bottoken
-    )
+    BotzHub = TelegramClient("BotzHub", api_id, api_hash).start(bot_token=bottoken)
 except Exception as e:
     log.error(f"ERROR!\n{str(e)}")
     log.error("Bot is quiting...")
