@@ -67,11 +67,21 @@ if [ -n "${GITHUB_TOKEN:-}" ]; then
             else
                 warn "GitHub push: push failed (permissions or network) – non-fatal"
             fi
+            # Also keep master in sync so Railway always gets the latest code
+            if git push origin "HEAD:master" --force 2>>"$ERR_LOG"; then
+                log "GitHub push: ✅ master branch synced"
+            else
+                warn "GitHub push: master sync failed – non-fatal"
+            fi
         else
             warn "GitHub push: commit failed – non-fatal"
         fi
     else
-        log "GitHub push: nothing new to push"
+        log "GitHub push: nothing new to push (both branches already current)"
+        # Ensure master is always up-to-date even when there are no new changes
+        git push origin "HEAD:master" --force 2>>"$ERR_LOG" \
+            && log "GitHub push: ✅ master confirmed in sync" \
+            || warn "GitHub push: master force-sync skipped – non-fatal"
     fi
 
     # Restore URL without token
