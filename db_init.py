@@ -40,6 +40,14 @@ def _init_postgres(url: str) -> None:
             user_id     BIGINT,
             created_at  TIMESTAMPTZ DEFAULT NOW()
         );
+        CREATE TABLE IF NOT EXISTS users (
+            id          SERIAL PRIMARY KEY,
+            user_id     BIGINT NOT NULL UNIQUE,
+            first_name  TEXT,
+            username    TEXT,
+            first_seen  TIMESTAMPTZ DEFAULT NOW(),
+            last_seen   TIMESTAMPTZ DEFAULT NOW()
+        );
     """)
     conn.commit()
     cur.close()
@@ -78,6 +86,14 @@ def _init_sqlite() -> None:
             chat_id     INTEGER,
             user_id     INTEGER,
             created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS users (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER NOT NULL UNIQUE,
+            first_name  TEXT,
+            username    TEXT,
+            first_seen  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_seen   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
     conn.commit()
