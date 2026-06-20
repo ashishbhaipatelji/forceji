@@ -1,4 +1,2 @@
 python-decouple
 telethon
-python-decouple
-telethon
