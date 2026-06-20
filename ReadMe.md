@@ -1,5 +1,10 @@
-# Force Subscribe Bot
+<div align="center">
+<img src="https://i.postimg.cc/BQthrsXC/file-00000000f7907246b09fc82b58b2df34.png" width="200" alt="Shield Logo">
+
+# 🛡️- Shield
+
 Forces a user to join your group/channel so as to be able to message in a group.
+</div>
 
 # Features
 - Checks for all newly joined members with a customisable welcome message.
@@ -9,7 +14,7 @@ Forces a user to join your group/channel so as to be able to message in a group.
 - `BOT_TOKEN` - Your telegram bot token.
 - `CHANNEL` - Username of the channel/group where users must join.
 - `WELCOME_MSG` - The welcome message you want.
-`WELCOME_NOT_JOINED` - Welcome message to show if user is not in the channel.
+- `WELCOME_NOT_JOINED` - Welcome message to show if user is not in the channel.
 - `ON_JOIN` - True/False - Set as True if the user must be muted, if not in Channel/group, directly when he joins.
 - `ON_NEW_MSG` - True/False - Set as True if the user must be muted, if not in Channel/group, on sending a message.
 
@@ -21,8 +26,8 @@ Note: `WELCOME_MSG` and `WELCOME_NOT_JOINED` can both be formatted using paramet
 # Deploy locally
 Watch the tutorial on deploying - https://youtu.be/8JTWG6yFi-4
 
-- `git clone https://github.com/xditya/ForceSub`
-- `cd ForceSub`
+- `git clone https://github.com/youneszas1995-cmd/Shield---`
+- `cd Shield---`
 - `pip3 install -U -r requirements.txt`
 - `touch .env`,  `nano .env` and fill in the [vars](.env.sample), Ctrl+S, Ctrl+X
 - Run the bot, `python3 bot.py`
@@ -30,8 +35,8 @@ Watch the tutorial on deploying - https://youtu.be/8JTWG6yFi-4
 # Deploy docker
 Implemented by [ShadowHunterV](https://github.com/ShadowHunterV/)
 
-- `git clone https://github.com/xditya/ForceSub`
-- `cd ForceSub`
+- `git clone https://github.com/youneszas1995-cmd/Shield---`
+- `cd Shield---`
 - `touch .env`,  `nano .env` and fill in the [vars](.env.sample), Ctrl+S, Ctrl+X
 - Start Docker daemon (Skip If already running) `sudo dockerd`
 - Build Docker image `sudo docker build . -t forcesub`
@@ -42,4 +47,5 @@ Implemented by [ShadowHunterV](https://github.com/ShadowHunterV/)
 # Credits
 - [Telethon](https://github.com/LonamiWebs/Telethon)
 - [BotzHub](https://t.me/BotzHub)
-- [Me](https://xditya.me/tg)
+- [Me](https://t.me/youneszas1995)
+- 
