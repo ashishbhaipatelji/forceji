@@ -48,6 +48,14 @@ def _init_postgres(url: str) -> None:
             first_seen  TIMESTAMPTZ DEFAULT NOW(),
             last_seen   TIMESTAMPTZ DEFAULT NOW()
         );
+        CREATE TABLE IF NOT EXISTS warnings (
+            id          SERIAL PRIMARY KEY,
+            user_id     BIGINT NOT NULL,
+            chat_id     BIGINT NOT NULL,
+            warned_by   BIGINT,
+            reason      TEXT DEFAULT '',
+            created_at  TIMESTAMPTZ DEFAULT NOW()
+        );
     """)
     conn.commit()
     cur.close()
@@ -94,6 +102,14 @@ def _init_sqlite() -> None:
             username    TEXT,
             first_seen  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             last_seen   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS warnings (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER NOT NULL,
+            chat_id     INTEGER NOT NULL,
+            warned_by   INTEGER,
+            reason      TEXT DEFAULT '',
+            created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
     conn.commit()

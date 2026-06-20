@@ -52,6 +52,10 @@ try:
     )
     on_join      = parse_bool(config("ON_JOIN",      default="True"))
     on_new_msg   = parse_bool(config("ON_NEW_MSG",   default="True"))
+    try:
+        WARN_LIMIT = int(config("WARN_LIMIT", default="3"))
+    except (ValueError, TypeError):
+        WARN_LIMIT = 3
     api_id       = config("API_ID", cast=int)
     api_hash     = config("API_HASH")
     session_string = config("SESSION_STRING", default=None)
@@ -190,6 +194,113 @@ def db_get_all_user_ids():
         return []
 
 
+def db_add_warn(user_id: int, chat_id: int, warned_by: int, reason: str = "") -> int:
+    """Insert a warning and return the new total count for this user in this chat."""
+    try:
+        conn, k = _db()
+        p = _ph(k)
+        conn.cursor().execute(
+            f"INSERT INTO warnings (user_id, chat_id, warned_by, reason) "
+            f"VALUES ({p},{p},{p},{p})",
+            (user_id, chat_id, warned_by, reason or ""),
+        )
+        conn.commit()
+        cur = conn.cursor()
+        cur.execute(
+            f"SELECT COUNT(*) FROM warnings WHERE user_id={p} AND chat_id={p}",
+            (user_id, chat_id),
+        )
+        count = cur.fetchone()[0]
+        conn.close()
+        return count
+    except Exception as e:
+        log.error("db_add_warn: %s", e)
+        return 0
+
+
+def db_get_warn_count(user_id: int, chat_id: int) -> int:
+    try:
+        conn, k = _db()
+        p = _ph(k)
+        cur = conn.cursor()
+        cur.execute(
+            f"SELECT COUNT(*) FROM warnings WHERE user_id={p} AND chat_id={p}",
+            (user_id, chat_id),
+        )
+        count = cur.fetchone()[0]
+        conn.close()
+        return count
+    except Exception as e:
+        log.error("db_get_warn_count: %s", e)
+        return 0
+
+
+def db_get_warns(user_id: int, chat_id: int) -> list:
+    """Return list of (reason, created_at) tuples."""
+    try:
+        conn, k = _db()
+        p = _ph(k)
+        cur = conn.cursor()
+        cur.execute(
+            f"SELECT reason, created_at FROM warnings "
+            f"WHERE user_id={p} AND chat_id={p} ORDER BY created_at ASC",
+            (user_id, chat_id),
+        )
+        rows = cur.fetchall()
+        conn.close()
+        return rows
+    except Exception as e:
+        log.error("db_get_warns: %s", e)
+        return []
+
+
+def db_remove_last_warn(user_id: int, chat_id: int) -> int:
+    """Remove the most recent warning. Returns remaining count."""
+    try:
+        conn, k = _db()
+        p = _ph(k)
+        cur = conn.cursor()
+        if k == "pg":
+            cur.execute(
+                f"DELETE FROM warnings WHERE id = ("
+                f"SELECT id FROM warnings WHERE user_id={p} AND chat_id={p} "
+                f"ORDER BY created_at DESC LIMIT 1)",
+                (user_id, chat_id),
+            )
+        else:
+            cur.execute(
+                f"DELETE FROM warnings WHERE id = ("
+                f"SELECT id FROM warnings WHERE user_id={p} AND chat_id={p} "
+                f"ORDER BY created_at DESC LIMIT 1)",
+                (user_id, chat_id),
+            )
+        conn.commit()
+        cur.execute(
+            f"SELECT COUNT(*) FROM warnings WHERE user_id={p} AND chat_id={p}",
+            (user_id, chat_id),
+        )
+        remaining = cur.fetchone()[0]
+        conn.close()
+        return remaining
+    except Exception as e:
+        log.error("db_remove_last_warn: %s", e)
+        return 0
+
+
+def db_clear_warns(user_id: int, chat_id: int):
+    try:
+        conn, k = _db()
+        p = _ph(k)
+        conn.cursor().execute(
+            f"DELETE FROM warnings WHERE user_id={p} AND chat_id={p}",
+            (user_id, chat_id),
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        log.error("db_clear_warns: %s", e)
+
+
 # ── Misc helpers ──────────────────────────────────────────────────────────────
 
 async def get_user_join(user_id):
@@ -274,7 +385,8 @@ def _start_buttons():
             Button.inline("🏓 Ping",          data=b"ping"),
         ],
         [
-            Button.url("⭐ GitHub", url="https://github.com/xditya/ForceSub"),
+            Button.inline("👨‍💻 Developer",    data=b"developer"),
+            Button.url("⭐ GitHub",           url="https://github.com/xditya/ForceSub"),
         ],
     ]
 
@@ -323,6 +435,10 @@ def _help_text():
         "› `/unban`    — Unban a user _(reply)_\n"
         "› `/kick`     — Kick a user _(reply)_\n"
         "› `/broadcast`— Broadcast a message to all bot users _(reply)_\n\n"
+        "**⚠️ Warning System** _(group admins only)_:\n"
+        "› `/warn [reason]` — Warn a user _(reply)_; auto-bans at limit\n"
+        "› `/warnings`      — View warning count for a user _(reply)_\n"
+        "› `/unwarn`        — Remove last warning from a user _(reply)_\n\n"
         "**📌 Placeholders** for welcome messages:\n"
         "`{mention}` `{name}` `{last}` `{fullname}`\n"
         "`{username}` `{title}` `{channel}` `{count}`"
@@ -461,11 +577,16 @@ def _admin_buttons():
             Button.inline("📣 Broadcast",         data=b"admin_help_broadcast"),
         ],
         [
-            Button.inline("🔍 Channel Status",   data=b"channel_status"),
-            Button.inline("🏓 Ping",              data=b"ping"),
+            Button.inline("⚠️ Warn User",         data=b"admin_help_warn"),
+            Button.inline("🔓 Unwarn User",       data=b"admin_help_unwarn"),
         ],
         [
-            Button.inline("◀️ Back to Menu",     data=b"back_start"),
+            Button.inline("📋 View Warnings",     data=b"admin_help_warnings"),
+            Button.inline("🔍 Channel Status",    data=b"channel_status"),
+        ],
+        [
+            Button.inline("🏓 Ping",              data=b"ping"),
+            Button.inline("◀️ Back to Menu",      data=b"back_start"),
         ],
     ]
 
@@ -714,6 +835,151 @@ async def cmd_broadcast(event):
         f"› ✅ Sent:   **{sent}**\n"
         f"› ❌ Failed: **{failed}**\n"
         f"› 👥 Total:  **{len(user_ids)}**"
+    )
+
+
+# ── /warn ─────────────────────────────────────────────────────────────────────
+
+@BotzHub.on(events.NewMessage(pattern=r"^/warn ?(.*)$"))
+async def cmd_warn(event):
+    if not (event.is_group or event.is_channel):
+        await event.reply("⚠️ Use this command inside a group.")
+        return
+    if not await is_admin(event.chat_id, event.sender_id):
+        await event.reply("⛔ Admins only.")
+        return
+    if not event.reply_to_msg_id:
+        await event.reply(
+            f"↩️ Reply to a user's message with `/warn [reason]` to warn them.\n"
+            f"Limit: **{WARN_LIMIT} warnings** → auto-ban."
+        )
+        return
+
+    target_msg  = await event.get_reply_message()
+    target_user = await target_msg.get_sender()
+
+    if not target_user:
+        await event.reply("⚠️ Could not identify that user.")
+        return
+    if target_user.bot:
+        await event.reply("⚠️ Bots cannot be warned.")
+        return
+    if target_user.id == event.sender_id:
+        await event.reply("⚠️ You cannot warn yourself.")
+        return
+
+    reason = (event.pattern_match.group(1) or "").strip()
+    count  = db_add_warn(target_user.id, event.chat_id, event.sender_id, reason)
+    db_log_stat("admin_warn", chat_id=event.chat_id, user_id=target_user.id)
+
+    name = get_display_name(target_user)
+
+    if count >= WARN_LIMIT:
+        # Auto-ban on reaching the limit
+        try:
+            await BotzHub.edit_permissions(event.chat_id, target_user.id, view_messages=False)
+            db_log_stat("auto_ban_warn", chat_id=event.chat_id, user_id=target_user.id)
+            db_clear_warns(target_user.id, event.chat_id)
+            await event.reply(
+                f"🚫 **{name}** has been **auto-banned**!\n\n"
+                f"› Reached warning limit: **{WARN_LIMIT}/{WARN_LIMIT}**\n"
+                f"› Reason: {reason or '_no reason given_'}\n"
+                f"› Warnings cleared after ban.",
+                buttons=[[Button.inline("🔐 Admin Panel", data=b"admin_panel")]],
+            )
+        except (ChatAdminRequiredError, UserAdminInvalidError):
+            await event.reply(
+                f"⚠️ **{name}** reached the warn limit ({WARN_LIMIT}) but I lack ban permissions.\n"
+                f"Please ban them manually."
+            )
+        except Exception as e:
+            log.error("cmd_warn auto-ban: %s", e)
+            await event.reply(f"⚠️ Auto-ban failed: {e}")
+    else:
+        bar = "🟥" * count + "⬜" * (WARN_LIMIT - count)
+        await event.reply(
+            f"⚠️ **{name}** has been warned!\n\n"
+            f"› Warnings: **{count}/{WARN_LIMIT}** {bar}\n"
+            f"› Reason: {reason or '_no reason given_'}\n"
+            f"› {WARN_LIMIT - count} more warning(s) will result in a ban.",
+            buttons=[[
+                Button.inline("📋 View Warnings", data=f"warns_{target_user.id}".encode()),
+                Button.inline("🔓 Unwarn",         data=f"unwarn_{target_user.id}".encode()),
+            ]],
+        )
+
+
+# ── /warnings ─────────────────────────────────────────────────────────────────
+
+@BotzHub.on(events.NewMessage(pattern="^/warnings$"))
+async def cmd_warnings(event):
+    if not (event.is_group or event.is_channel):
+        await event.reply("⚠️ Use this command inside a group.")
+        return
+    if not await is_admin(event.chat_id, event.sender_id):
+        await event.reply("⛔ Admins only.")
+        return
+    if not event.reply_to_msg_id:
+        await event.reply("↩️ Reply to a user's message with `/warnings` to view their warnings.")
+        return
+
+    target_msg  = await event.get_reply_message()
+    target_user = await target_msg.get_sender()
+    if not target_user:
+        await event.reply("⚠️ Could not identify that user.")
+        return
+
+    warns = db_get_warns(target_user.id, event.chat_id)
+    count = len(warns)
+    name  = get_display_name(target_user)
+
+    if count == 0:
+        await event.reply(f"✅ **{name}** has no warnings in this group.")
+        return
+
+    bar = "🟥" * count + "⬜" * max(0, WARN_LIMIT - count)
+    lines = [f"⚠️ **{name}** — Warnings: **{count}/{WARN_LIMIT}** {bar}\n"]
+    for i, (reason, ts) in enumerate(warns, 1):
+        ts_str = str(ts)[:16] if ts else "unknown"
+        reason_str = reason.strip() if reason and reason.strip() else "_no reason_"
+        lines.append(f"**{i}.** {reason_str} _(at {ts_str})_")
+
+    await event.reply(
+        "\n".join(lines),
+        buttons=[[
+            Button.inline("🔓 Remove Last Warn", data=f"unwarn_{target_user.id}".encode()),
+            Button.inline("🗑️ Clear All Warns",  data=f"clearwarns_{target_user.id}".encode()),
+        ]],
+    )
+
+
+# ── /unwarn ───────────────────────────────────────────────────────────────────
+
+@BotzHub.on(events.NewMessage(pattern="^/unwarn$"))
+async def cmd_unwarn(event):
+    if not (event.is_group or event.is_channel):
+        await event.reply("⚠️ Use this command inside a group.")
+        return
+    if not await is_admin(event.chat_id, event.sender_id):
+        await event.reply("⛔ Admins only.")
+        return
+    if not event.reply_to_msg_id:
+        await event.reply("↩️ Reply to a user's message with `/unwarn` to remove their last warning.")
+        return
+
+    target_msg  = await event.get_reply_message()
+    target_user = await target_msg.get_sender()
+    if not target_user:
+        await event.reply("⚠️ Could not identify that user.")
+        return
+
+    remaining = db_remove_last_warn(target_user.id, event.chat_id)
+    db_log_stat("admin_unwarn", chat_id=event.chat_id, user_id=target_user.id)
+    name = get_display_name(target_user)
+    bar  = "🟥" * remaining + "⬜" * max(0, WARN_LIMIT - remaining)
+    await event.reply(
+        f"✅ Last warning removed from **{name}**.\n"
+        f"› Remaining: **{remaining}/{WARN_LIMIT}** {bar}"
     )
 
 
@@ -1044,6 +1310,9 @@ _ADMIN_HELP = {
     b"admin_help_unban":     ("✅ Unban a User",       "In your group, reply to a user's message and send:\n/unban"),
     b"admin_help_kick":      ("👢 Kick a User",       "In your group, reply to a user's message and send:\n/kick"),
     b"admin_help_broadcast": ("📣 Broadcast",         "Reply to any message and send:\n/broadcast\nI'll forward it to all bot users."),
+    b"admin_help_warn":      ("⚠️ Warn a User",       f"Reply to a user's message and send:\n/warn [reason]\n\nAuto-bans after {WARN_LIMIT} warnings."),
+    b"admin_help_unwarn":    ("🔓 Unwarn a User",     "Reply to a user's message and send:\n/unwarn\nThis removes their most recent warning."),
+    b"admin_help_warnings":  ("📋 View Warnings",     "Reply to a user's message and send:\n/warnings\nShows their warning count and history."),
 }
 
 for _cb_data, (_title, _desc) in _ADMIN_HELP.items():
@@ -1054,6 +1323,109 @@ for _cb_data, (_title, _desc) in _ADMIN_HELP.items():
     BotzHub.on(events.callbackquery.CallbackQuery(data=_cb_data))(
         _make_handler(_title, _desc)
     )
+
+
+# ── Developer profile card ────────────────────────────────────────────────────
+
+@BotzHub.on(events.callbackquery.CallbackQuery(data=b"developer"))
+async def cb_developer(event):
+    await event.answer(cache_time=0)
+    dev_buttons = [
+        [
+            Button.url("✈️ Telegram",  url="https://t.me/Y9_S4"),
+            Button.url("📸 Instagram", url="https://www.instagram.com/1.0_v_?igsh=N2N5MXNwN3p4ZDY2"),
+        ],
+        [
+            Button.url("🎵 TikTok",    url="https://www.tiktok.com/@zix8ii?_r=1&_t=ZS-96PtnTlOnnY"),
+            Button.url("📘 Facebook",  url="https://www.facebook.com/share/18pSHgPiaS/"),
+        ],
+        [
+            Button.inline("◀️ Back to Menu", data=b"back_start"),
+        ],
+    ]
+    try:
+        await BotzHub.send_file(
+            event.chat_id,
+            "https://i.postimg.cc/s2Xm3qSf/IMG-20260620-133210-543.jpg",
+            caption=(
+                "**👨‍💻 Developer**\n\n"
+                "Shield Bot was built and maintained by its developer.\n"
+                "Reach out via any of the links below 👇"
+            ),
+            buttons=dev_buttons,
+        )
+    except Exception as e:
+        log.error("cb_developer send_file: %s", e)
+        await event.answer("⚠️ Could not load developer card. Try again.", cache_time=0, alert=True)
+
+
+# ── Warn-related inline button callbacks ─────────────────────────────────────
+
+@BotzHub.on(events.callbackquery.CallbackQuery(pattern=rb"warns_(\d+)"))
+async def cb_view_warns(event):
+    if not await is_admin(event.chat_id, event.sender_id):
+        await event.answer("⛔ Admins only.", cache_time=0, alert=True)
+        return
+    uid   = int(event.data_match.group(1))
+    warns = db_get_warns(uid, event.chat_id)
+    count = len(warns)
+    if count == 0:
+        await event.answer("✅ This user has no warnings.", cache_time=0, alert=True)
+        return
+    bar   = "🟥" * count + "⬜" * max(0, WARN_LIMIT - count)
+    lines = [f"⚠️ Warnings: **{count}/{WARN_LIMIT}** {bar}\n"]
+    for i, (reason, ts) in enumerate(warns, 1):
+        ts_str = str(ts)[:16] if ts else "unknown"
+        reason_str = reason.strip() if reason and reason.strip() else "_no reason_"
+        lines.append(f"**{i}.** {reason_str} _(at {ts_str})_")
+    try:
+        await event.edit(
+            "\n".join(lines),
+            buttons=[[
+                Button.inline("🔓 Remove Last Warn", data=f"unwarn_{uid}".encode()),
+                Button.inline("🗑️ Clear All Warns",  data=f"clearwarns_{uid}".encode()),
+            ]],
+        )
+    except Exception:
+        await event.answer("\n".join(lines[:5]), cache_time=0, alert=True)
+
+
+@BotzHub.on(events.callbackquery.CallbackQuery(pattern=rb"unwarn_(\d+)"))
+async def cb_unwarn_btn(event):
+    if not await is_admin(event.chat_id, event.sender_id):
+        await event.answer("⛔ Admins only.", cache_time=0, alert=True)
+        return
+    uid       = int(event.data_match.group(1))
+    remaining = db_remove_last_warn(uid, event.chat_id)
+    bar       = "🟥" * remaining + "⬜" * max(0, WARN_LIMIT - remaining)
+    await event.answer(
+        f"✅ Last warning removed. Remaining: {remaining}/{WARN_LIMIT} {bar}",
+        cache_time=0, alert=True,
+    )
+    try:
+        await event.edit(
+            f"⚠️ Warning removed.\n› Remaining: **{remaining}/{WARN_LIMIT}** {bar}",
+            buttons=[[Button.inline("📋 View Remaining", data=f"warns_{uid}".encode())]],
+        )
+    except Exception:
+        pass
+
+
+@BotzHub.on(events.callbackquery.CallbackQuery(pattern=rb"clearwarns_(\d+)"))
+async def cb_clearwarns_btn(event):
+    if not await is_admin(event.chat_id, event.sender_id):
+        await event.answer("⛔ Admins only.", cache_time=0, alert=True)
+        return
+    uid = int(event.data_match.group(1))
+    db_clear_warns(uid, event.chat_id)
+    await event.answer("🗑️ All warnings cleared.", cache_time=0, alert=True)
+    try:
+        await event.edit(
+            "✅ All warnings have been cleared for this user.",
+            buttons=[[Button.inline("◀️ Back to Admin", data=b"admin_panel")]],
+        )
+    except Exception:
+        pass
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

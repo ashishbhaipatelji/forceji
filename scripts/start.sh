@@ -80,6 +80,17 @@ else
     warn "GitHub sync: GITHUB_TOKEN not set – running in offline mode"
 fi
 
+# ── 2b. Railway environment check ───────────────────────────
+# Railway automatically sets RAILWAY_ENVIRONMENT (e.g. "production").
+# If it is NOT set we are on Replit or a local machine — do git sync only,
+# then exit cleanly to prevent a duplicate Telegram session alongside Railway.
+if [ -z "${RAILWAY_ENVIRONMENT:-}" ]; then
+    log "⚠️  RAILWAY_ENVIRONMENT not detected — running in Replit/local mode."
+    log "    Git sync complete. Bot startup skipped: Railway is the primary runtime."
+    log "    To run the bot here, set RAILWAY_ENVIRONMENT=production in Replit secrets."
+    exit 0
+fi
+
 # ── 3. Install / verify dependencies ───────────────────────
 log "Installing dependencies…"
 pip install -q -r requirements.txt 2>>"$ERR_LOG" \
