@@ -62,7 +62,7 @@ if [ -n "${GITHUB_TOKEN:-}" ]; then
     if ! git diff --cached --quiet 2>/dev/null; then
         COMMIT_MSG="chore: Replit production sync [$(date '+%Y-%m-%d %H:%M')]"
         if git commit -m "$COMMIT_MSG" 2>>"$ERR_LOG"; then
-            if git push origin "HEAD:$TARGET_BRANCH" 2>>"$ERR_LOG"; then
+            if git push origin "HEAD:$TARGET_BRANCH" --force 2>>"$ERR_LOG"; then
                 log "GitHub push: ✅ changes pushed to $TARGET_BRANCH"
             else
                 warn "GitHub push: push failed (permissions or network) – non-fatal"
