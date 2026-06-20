@@ -9,10 +9,7 @@ from decouple import config
 from telethon.errors.rpcerrorlist import UserNotParticipantError
 from telethon.tl.functions.channels import GetParticipantRequest
 from telethon.tl.types import ChannelParticipantsAdmins
-from telethon.errors import (
-    ChatAdminRequiredError, UserAdminInvalidError,
-    UserIdInvalidError, PeerIdInvalidError,
-)
+from telethon.errors import ChatAdminRequiredError, UserAdminInvalidError
 import sqlite3
 import psycopg2
 from datetime import datetime, timezone
@@ -680,9 +677,16 @@ async def cmd_kick(event):
 
 @BotzHub.on(events.NewMessage(pattern="^/broadcast$"))
 async def cmd_broadcast(event):
+    # In groups/channels: group admins only
     if (event.is_group or event.is_channel) and not await is_admin(event.chat_id, event.sender_id):
-        await event.reply("⛔ Admins only.")
+        await event.reply("⛔ This command is for group admins only.")
         return
+    # In private DMs: restrict to admins who are also channel admins
+    if event.is_private:
+        is_chan_admin = await is_admin(channel, event.sender_id)
+        if not is_chan_admin:
+            await event.reply("⛔ Only channel admins can use /broadcast from private chat.")
+            return
     if not event.reply_to_msg_id:
         await event.reply(
             "📣 **How to broadcast:**\n"
@@ -775,6 +779,12 @@ async def on_new_message(event):
     if event.is_private:
         return
     if not on_new_msg:
+        return
+    # Skip commands — the command handler already replies; avoid double responses
+    if event.text and event.text.startswith("/"):
+        return
+    # Skip anonymous admin posts and service messages that have no real sender
+    if not event.sender_id:
         return
 
     try:
@@ -1002,7 +1012,12 @@ async def cb_channel_status(event):
         except Exception:
             members_str = "_unavailable_"
         title = getattr(entity, "title", channel)
-        await event.answer(f"📢 {title}: {members_str} members", cache_time=0, alert=False)
+        # Plain text for answer popup (markdown doesn't render there)
+        try:
+            members_plain = int(members_str.replace("**", "")) if members_str != "_unavailable_" else "N/A"
+        except Exception:
+            members_plain = "N/A"
+        await event.answer(f"📢 {title} · {members_plain} members", cache_time=0, alert=False)
         try:
             await event.edit(
                 f"**📢 Channel Info: @{channel}**\n\n"
