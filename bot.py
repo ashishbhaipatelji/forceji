@@ -13,6 +13,7 @@
 #    License can be found in < https://github.com/xditya/ForceSub/blob/main/License> .
 
 import logging
+import asyncio
 from telethon.utils import get_display_name
 import re
 from telethon import TelegramClient, events, Button
@@ -51,6 +52,53 @@ except Exception as e:
 
 channel = xchannel.replace("@", "")
 bot_self = BotzHub.loop.run_until_complete(BotzHub.get_me())
+
+
+# Auto-unmute timers: {(chat_id, user_id): asyncio.Task}
+unmute_tasks = {}
+
+
+def cancel_unmute_task(chat_id, user_id):
+    """Cancel an existing auto-unmute timer for a user."""
+    task = unmute_tasks.pop((chat_id, user_id), None)
+    if task and not task.done():
+        task.cancel()
+
+
+async def auto_unmute(chat_id, user_id):
+    """Unmute a user automatically after 2 minutes."""
+    try:
+        await asyncio.sleep(120)
+
+        # If the user has joined the required channel, keep them unmuted.
+        # If they have not joined, this is still the requested temporary
+        # 2-minute unmute; their next message will mute them again.
+        await BotzHub.edit_permissions(
+            chat_id,
+            user_id,
+            until_date=None,
+            send_messages=True,
+        )
+
+        log.info("Auto-unmuted user %s in chat %s after 2 minutes", user_id, chat_id)
+
+    except asyncio.CancelledError:
+        # Timer was cancelled because the user joined or a new timer replaced it.
+        pass
+    except Exception as e:
+        log.error("Auto-unmute error for user %s in chat %s: %s", user_id, chat_id, e)
+    finally:
+        current = unmute_tasks.get((chat_id, user_id))
+        if current is asyncio.current_task():
+            unmute_tasks.pop((chat_id, user_id), None)
+
+
+def start_unmute_timer(chat_id, user_id):
+    """Start/restart the 2-minute auto-unmute timer."""
+    cancel_unmute_task(chat_id, user_id)
+    task = asyncio.create_task(auto_unmute(chat_id, user_id))
+    unmute_tasks[(chat_id, user_id)] = task
+
 
 
 # join check
@@ -114,6 +162,7 @@ async def _(event):
             await BotzHub.edit_permissions(
                 event.chat.id, user.id, until_date=None, send_messages=False
             )
+            start_unmute_timer(event.chat.id, user.id)
 
         await event.reply(msg, buttons=butt)
 
@@ -124,44 +173,69 @@ async def mute_on_msg(event):
         return
     if on_new_msg is False:
         return
-    x = await get_user_join(event.sender_id)
-    temp = await BotzHub.get_entity(event.sender_id)
-    if x is False:
-        if temp.bot:
-            return
-        nm = temp.first_name
-        try:
-            await BotzHub.edit_permissions(
-                event.chat.id, event.sender_id, until_date=None, send_messages=False
+    if not event.sender_id:
+        return
+
+    try:
+        x = await get_user_join(event.sender_id)
+        temp = await BotzHub.get_entity(event.sender_id)
+
+        if x is False:
+            if temp.bot:
+                return
+
+            # User has sent a message while not subscribed:
+            # mute them again and start a fresh 2-minute timer.
+            try:
+                await BotzHub.edit_permissions(
+                    event.chat.id,
+                    event.sender_id,
+                    until_date=None,
+                    send_messages=False,
+                )
+                start_unmute_timer(event.chat.id, event.sender_id)
+            except Exception as e:
+                log.error("Mute/timer error: %s", e)
+                return
+
+            user = await event.get_sender()
+            chat = await event.get_chat()
+            title = chat.title or "this chat"
+            pp = await BotzHub.get_participants(chat)
+            count = len(pp)
+            mention = f"[{get_display_name(user)}](tg://user?id={user.id})"
+            name = user.first_name
+            last = user.last_name
+            fullname = f"{name} {last}" if last else name
+            username = f"@{uu}" if (uu := user.username) else mention
+
+            reply_msg = welcome_not_joined.format(
+                mention=mention,
+                title=title,
+                fullname=fullname,
+                username=username,
+                name=name,
+                last=last,
+                channel=f"@{channel}",
+                count=count,
             )
-        except Exception as e:
-            log.error(e)
-            return
-        user = await event.get_sender()
-        chat = await event.get_chat()
-        title = chat.title or "this chat"
-        pp = await BotzHub.get_participants(chat)
-        count = len(pp)
-        mention = f"[{get_display_name(user)}](tg://user?id={user.id})"
-        name = user.first_name
-        last = user.last_name
-        fullname = f"{name} {last}" if last else name
-        username = f"@{uu}" if (uu := user.username) else mention
-        reply_msg = welcome_not_joined.format(
-            mention=mention,
-            title=title,
-            fullname=fullname,
-            username=username,
-            name=name,
-            last=last,
-            channel=f"@{channel}",
-            count=count,
-        )
-        butt = [
-            Button.url("Channel", url=f"https://t.me/{channel}"),
-            Button.inline("UnMute Me", data=f"unmute_{event.sender_id}"),
-        ]
-        await event.reply(reply_msg, buttons=butt)
+
+            butt = [
+                Button.url("Channel", url=f"https://t.me/{channel}"),
+                Button.inline(
+                    "UnMute Me",
+                    data=f"unmute_{event.sender_id}",
+                ),
+            ]
+            await event.reply(reply_msg, buttons=butt)
+
+        else:
+            # If the user is already subscribed, make sure any old timer
+            # is stopped and leave them unmuted.
+            cancel_unmute_task(event.chat.id, event.sender_id)
+
+    except Exception as e:
+        log.error("Message handler error: %s", e)
 
 
 @BotzHub.on(events.callbackquery.CallbackQuery(data=re.compile(b"unmute_(.*)")))
@@ -176,6 +250,7 @@ async def _(event):
             )
         elif x is True:
             try:
+                cancel_unmute_task(event.chat.id, uid)
                 await BotzHub.edit_permissions(
                     event.chat.id, uid, until_date=None, send_messages=True
                 )
