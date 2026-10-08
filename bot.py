@@ -14,6 +14,9 @@
 
 import logging
 import asyncio
+import os
+from threading import Thread
+from flask import Flask
 from telethon.utils import get_display_name
 import re
 from telethon import TelegramClient, events, Button
@@ -26,6 +29,17 @@ logging.basicConfig(
     format="[%(levelname) 5s/%(asctime)s] %(name)s: %(message)s", level=logging.INFO
 )
 log = logging.getLogger("BotzHub")
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "ForceSub Bot is running!", 200
+
+def run_webserver():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+
+Thread(target=run_webserver, daemon=True).start()
 
 # start the bot
 log.info("Starting...")
