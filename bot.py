@@ -71,6 +71,57 @@ bot_self = BotzHub.loop.run_until_complete(BotzHub.get_me())
 # Auto-unmute timers: {(chat_id, user_id): asyncio.Task}
 unmute_tasks = {}
 
+# Auto-delete timers for messages sent by the bot.
+message_delete_tasks = {}
+
+
+async def delete_message_later(message, delay=120):
+    """Delete a bot-generated message after exactly 2 minutes."""
+    message_id = getattr(message, "id", None)
+    chat_id = getattr(message, "chat_id", None)
+    try:
+        await asyncio.sleep(delay)
+
+        if not message_id or not chat_id:
+            log.error("AUTO-DELETE: missing message_id/chat_id")
+            return
+
+        # Use the client-level delete request explicitly. This is more reliable
+        # for group/supergroup messages than relying on Message.delete().
+        await BotzHub.delete_messages(chat_id, [message_id])
+        log.info(
+            "AUTO-DELETE SUCCESS: message %s deleted from chat %s after %s seconds",
+            message_id, chat_id, delay
+        )
+    except asyncio.CancelledError:
+        log.info("AUTO-DELETE CANCELLED: message %s", message_id)
+    except Exception as e:
+        log.error(
+            "AUTO-DELETE FAILED: message %s in chat %s | %s: %s",
+            message_id, chat_id, type(e).__name__, e
+        )
+    finally:
+        if message_id is not None:
+            message_delete_tasks.pop(message_id, None)
+
+
+def schedule_message_delete(message, delay=120):
+    """Schedule a bot message for automatic deletion."""
+    task = asyncio.create_task(delete_message_later(message, delay))
+    message_delete_tasks[message.id] = task
+    log.info(
+        "AUTO-DELETE SCHEDULED: message %s in chat %s will be deleted in %s seconds",
+        message.id, getattr(message, "chat_id", "?"), delay
+    )
+    return task
+
+
+async def send_temporary_message(event, message, buttons=None, delay=120):
+    """Send a bot message and automatically delete it after 2 minutes."""
+    sent = await event.reply(message, buttons=buttons)
+    schedule_message_delete(sent, delay)
+    return sent
+
 
 def cancel_unmute_task(chat_id, user_id):
     """Cancel an existing auto-unmute timer for a user."""
@@ -178,7 +229,7 @@ async def _(event):
             )
             start_unmute_timer(event.chat.id, user.id)
 
-        await event.reply(msg, buttons=butt)
+        await send_temporary_message(event, msg, buttons=butt)
 
 
 @BotzHub.on(events.NewMessage(incoming=True))
@@ -241,7 +292,7 @@ async def mute_on_msg(event):
                     data=f"unmute_{event.sender_id}",
                 ),
             ]
-            await event.reply(reply_msg, buttons=butt)
+            await send_temporary_message(event, reply_msg, buttons=butt)
 
         else:
             # If the user is already subscribed, make sure any old timer
@@ -273,7 +324,8 @@ async def _(event):
                 return
             msg = f"Welcome to {(await event.get_chat()).title}, {nm}!\nGood to see you here!"
             butt = [Button.url("Channel", url=f"https://t.me/{channel}")]
-            await event.edit(msg, buttons=butt)
+            edited_msg = await event.edit(msg, buttons=butt)
+            schedule_message_delete(edited_msg, 120)
     else:
         await event.answer(
             "You are an old member and can speak freely! This isn't for you!",
@@ -284,7 +336,8 @@ async def _(event):
 
 @BotzHub.on(events.NewMessage(pattern="^/start$"))
 async def strt(event):
-    await event.reply(
+    await send_temporary_message(
+        event,
         f"Hi. I'm a force subscribe bot made specially for @{channel}!\n\nCheckout @BotzHub :)",
         buttons=[
             Button.url("Channel", url=f"https://t.me/{channel}"),
